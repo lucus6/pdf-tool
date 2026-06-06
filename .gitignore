@@ -1,0 +1,23 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+
+# Virtual environments
+venv/
+.venv/
+
+# IDE
+.idea/
+.vscode/
+*.swp
+
+# Test files
+test_pdfs/
+
+# Claude
+.claude/
+
+# OS
+.DS_Store
+Thumbs.db
