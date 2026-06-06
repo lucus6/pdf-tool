@@ -1,14 +1,12 @@
 """GUI components: DropZone, SplitTab, MergeTab, DeleteTab, MainWindow."""
 
 import os
-from PySide2.QtWidgets import (
-    QMainWindow, QWidget, QTabWidget, QVBoxLayout, QHBoxLayout,
-    QPushButton, QLabel, QLineEdit, QListWidget, QFileDialog,
-    QMessageBox, QStatusBar, QMenuBar, QAction, QAbstractItemView,
-    QApplication,
-)
-from PySide2.QtCore import Qt, Signal, QThread
-from PySide2.QtGui import QFont, QDragEnterEvent, QDropEvent
+from _qt_compat import (QMainWindow, QWidget, QTabWidget, QVBoxLayout,
+                         QHBoxLayout, QPushButton, QLabel, QLineEdit,
+                         QListWidget, QFileDialog, QMessageBox, QStatusBar,
+                         QMenuBar, QAction, QAbstractItemView, QApplication,
+                         Qt, Signal, QThread, QFont, QDragEnterEvent,
+                         QDropEvent)
 
 import engine
 from worker import PdfWorker

@@ -1,6 +1,6 @@
 """QThread-based async worker for non-blocking PDF operations."""
 
-from PySide2.QtCore import QObject, Signal
+from _qt_compat import QObject, Signal
 
 
 class PdfWorker(QObject):

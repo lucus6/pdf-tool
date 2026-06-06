@@ -18,6 +18,12 @@ test_pdfs/
 # Claude
 .claude/
 
+# PyInstaller
+build/
+dist/
+*.spec
+build_venv/
+
 # OS
 .DS_Store
 Thumbs.db
