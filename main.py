@@ -27,11 +27,20 @@ from ui import MainWindow              # noqa: E402
 
 
 def main():
+    # Enable high-DPI scaling. PySide6 does this by default, but PySide2
+    # needs explicit opt-in for consistent window size across environments.
+    try:
+        from _qt_compat import Qt
+        QApplication.setAttribute(Qt.AA_EnableHighDpiScaling, True)
+        QApplication.setAttribute(Qt.AA_UseHighDpiPixmaps, True)
+    except AttributeError:
+        pass  # PySide6 doesn't have these, but doesn't need them either
+
     app = QApplication(sys.argv)
     app.setApplicationName("PDF 工具箱")
     window = MainWindow()
     window.show()
-    sys.exit(app.exec())
+    sys.exit(app.exec_())
 
 
 if __name__ == "__main__":
