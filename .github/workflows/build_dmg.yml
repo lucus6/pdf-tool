@@ -1,0 +1,56 @@
+name: Build macOS DMG
+
+on:
+  push:
+    branches: [master]
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install dependencies
+        run: pip install PySide6 pypdf pyinstaller
+
+      - name: Build .app with PyInstaller
+        run: |
+          pyinstaller \
+            --onedir \
+            --windowed \
+            --name "PDF工具箱" \
+            --osx-bundle-identifier "com.pdftoolbox.app" \
+            --add-data "_qt_compat.py:." \
+            --clean \
+            --noconfirm \
+            main.py
+
+      - name: Create DMG
+        run: |
+          mkdir dmg_root
+          cp -R dist/PDF工具箱.app dmg_root/
+          ln -s /Applications dmg_root/Applications
+          hdiutil create \
+            -volname "PDF工具箱" \
+            -srcfolder dmg_root \
+            -ov \
+            -format UDZO \
+            PDF工具箱.dmg
+
+      - name: Upload DMG artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: PDF工具箱-macOS
+          path: PDF工具箱.dmg
+
+      - name: Upload .app artifact (for download & unzip)
+        uses: actions/upload-artifact@v4
+        with:
+          name: PDF工具箱-macOS-app
+          path: dist/PDF工具箱.app

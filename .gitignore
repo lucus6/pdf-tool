@@ -23,6 +23,7 @@ build/
 dist/
 *.spec
 build_venv/
+build_dmg_work/
 
 # OS
 .DS_Store
