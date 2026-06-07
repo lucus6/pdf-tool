@@ -164,9 +164,376 @@ def delete_pages(input_path: str, pages_to_delete: list, output_dir: str) -> str
     return out_path
 
 
-# ---------------------------------------------------------------------------
-# Self-test (run with: python engine.py)
-# ---------------------------------------------------------------------------
+def rotate_pages(input_path: str, pages: list, angle: int, output_dir: str) -> list:
+    """Rotate specified pages (1-based) by 90, 180, or 270 degrees clockwise.
+    Saves the entire PDF with rotations applied to the selected pages.
+    """
+    reader = PdfReader(input_path)
+    total = len(reader.pages)
+    rotate_set = set()
+    for p in pages:
+        if p > total:
+            raise ValueError(f"页码 {p} 超出 PDF 总页数 ({total} 页)")
+        rotate_set.add(p - 1)
+
+    writer = PdfWriter()
+    for i in range(total):
+        page = reader.pages[i]
+        if i in rotate_set:
+            page.rotate(angle)
+        writer.add_page(page)
+
+    stem = os.path.splitext(os.path.basename(input_path))[0]
+    filename = f"{stem}_rotated_{angle}.pdf"
+    out_path = _unique_path(output_dir, filename)
+    with open(out_path, "wb") as f:
+        writer.write(f)
+    return [out_path]
+
+
+def extract_pages(input_path: str, page_numbers: list, output_dir: str) -> str:
+    """Extract specified pages (1-based) into a single new PDF."""
+    reader = PdfReader(input_path)
+    total = len(reader.pages)
+
+    writer = PdfWriter()
+    for p in page_numbers:
+        if p > total:
+            raise ValueError(f"页码 {p} 超出 PDF 总页数 ({total} 页)")
+        writer.add_page(reader.pages[p - 1])
+
+    stem = os.path.splitext(os.path.basename(input_path))[0]
+    filename = f"{stem}_extracted.pdf"
+    out_path = _unique_path(output_dir, filename)
+    with open(out_path, "wb") as f:
+        writer.write(f)
+    return out_path
+
+
+def compress_pdf(input_path: str, quality: str, output_dir: str) -> str:
+    """Compress a PDF with three quality levels.
+
+    quality: "low" (lossless), "medium" (moderate image compression),
+             "high" (aggressive image compression, lossy).
+    """
+    reader = PdfReader(input_path)
+    writer = PdfWriter()
+
+    for page in reader.pages:
+        page.compress_content_streams()
+        writer.add_page(page)
+
+    writer.compress_identical_objects()
+
+    if quality in ("medium", "high"):
+        img_quality = 40 if quality == "high" else 70
+        _recompress_images(writer, quality=img_quality)
+
+    stem = os.path.splitext(os.path.basename(input_path))[0]
+    filename = f"{stem}_compressed.pdf"
+    out_path = _unique_path(output_dir, filename)
+    with open(out_path, "wb") as f:
+        writer.write(f)
+    return out_path
+
+
+def _recompress_images(writer, quality):
+    """Lossy recompress images in the writer using Pillow, if available."""
+    try:
+        from PIL import Image
+        import io
+    except ImportError:
+        return
+
+    for page in writer.pages:
+        for key in list(page.images.keys()):
+            img = page.images[key]
+            if not img.data:
+                continue
+            try:
+                im = Image.open(io.BytesIO(img.data))
+                if im.mode not in ("RGB", "RGBA", "L"):
+                    im = im.convert("RGB")
+                buf = io.BytesIO()
+                fmt = "PNG" if im.mode == "RGBA" else "JPEG"
+                save_kw = {"format": fmt, "optimize": True}
+                if fmt == "JPEG":
+                    save_kw["quality"] = quality
+                im.save(buf, **save_kw)
+                img.replace(buf.getvalue())
+            except Exception:
+                continue
+
+
+def encrypt_pdf(input_path: str, user_password: str, owner_password: str,
+                output_dir: str) -> str:
+    """Add an open password to a PDF. owner_password can be empty string."""
+    reader = PdfReader(input_path)
+    writer = PdfWriter()
+    for page in reader.pages:
+        writer.add_page(page)
+    kwargs = {"user_password": user_password}
+    if owner_password:
+        kwargs["owner_password"] = owner_password
+    writer.encrypt(**kwargs)
+
+    stem = os.path.splitext(os.path.basename(input_path))[0]
+    filename = f"{stem}_encrypted.pdf"
+    out_path = _unique_path(output_dir, filename)
+    with open(out_path, "wb") as f:
+        writer.write(f)
+    return out_path
+
+
+def decrypt_pdf(input_path: str, password: str, output_dir: str) -> str:
+    """Remove password protection from a PDF. Raises ValueError on wrong password."""
+    reader = PdfReader(input_path)
+    if not reader.is_encrypted:
+        raise ValueError("PDF 未加密，无需解密")
+
+    result = reader.decrypt(password)
+    if result == 0:
+        raise ValueError("密码错误，无法解密")
+
+    writer = PdfWriter()
+    for page in reader.pages:
+        writer.add_page(page)
+
+    stem = os.path.splitext(os.path.basename(input_path))[0]
+    filename = f"{stem}_decrypted.pdf"
+    out_path = _unique_path(output_dir, filename)
+    with open(out_path, "wb") as f:
+        writer.write(f)
+    return out_path
+
+
+def add_text_watermark(input_path: str, text: str, position: str, opacity: float,
+                        rotation: float, font_size: int, output_dir: str) -> str:
+    """Overlay a text watermark on every page."""
+    from PIL import Image, ImageDraw
+
+    reader = PdfReader(input_path)
+    writer = PdfWriter()
+
+    for page in reader.pages:
+        w_pt = float(page.mediabox.width)
+        h_pt = float(page.mediabox.height)
+        pw, ph = int(w_pt), int(h_pt)
+
+        stamp = Image.new("RGBA", (pw, ph), (255, 255, 255, 0))
+        draw = ImageDraw.Draw(stamp)
+        font = _load_cjk_font(font_size)
+        bbox = draw.textbbox((0, 0), text, font=font)
+        tw, th = bbox[2] - bbox[0], bbox[3] - bbox[1]
+        alpha = int(255 * opacity)
+
+        for tx, ty in _wm_positions(position, tw, th, pw, ph):
+            _draw_rotated_text(draw, text, tx, ty, tw, th, rotation, font,
+                               fill=(128, 128, 128, alpha))
+
+        _stamp_page(writer, page, stamp, w_pt, h_pt)
+
+    stem = os.path.splitext(os.path.basename(input_path))[0]
+    filename = f"{stem}_watermarked.pdf"
+    out_path = _unique_path(output_dir, filename)
+    with open(out_path, "wb") as f:
+        writer.write(f)
+    return out_path
+
+
+def add_image_watermark(input_path: str, image_path: str, position: str,
+                         opacity: float, scale: float, rotation: float,
+                         output_dir: str) -> str:
+    """Overlay an image watermark on every page."""
+    from PIL import Image
+
+    reader = PdfReader(input_path)
+    writer = PdfWriter()
+    wm_orig = Image.open(image_path).convert("RGBA")
+
+    for page in reader.pages:
+        w_pt = float(page.mediabox.width)
+        h_pt = float(page.mediabox.height)
+        pw, ph = int(w_pt), int(h_pt)
+
+        short = min(pw, ph)
+        wm_w = int(short * scale)
+        wm_h = int(wm_w * wm_orig.height / wm_orig.width) if wm_orig.width else wm_w
+        wm = wm_orig.resize((wm_w, wm_h), Image.LANCZOS)
+
+        if opacity < 1.0:
+            r, g, b, a = wm.split()
+            a = a.point(lambda x: int(x * opacity))
+            wm = Image.merge("RGBA", (r, g, b, a))
+
+        if rotation != 0:
+            wm = wm.rotate(rotation, expand=True, resample=Image.BICUBIC)
+
+        stamp = Image.new("RGBA", (pw, ph), (255, 255, 255, 0))
+        for tx, ty in _wm_positions(position, wm.width, wm.height, pw, ph):
+            stamp.paste(wm, (tx, ty), wm)
+
+        _stamp_page(writer, page, stamp, w_pt, h_pt)
+
+    stem = os.path.splitext(os.path.basename(input_path))[0]
+    filename = f"{stem}_watermarked.pdf"
+    out_path = _unique_path(output_dir, filename)
+    with open(out_path, "wb") as f:
+        writer.write(f)
+    return out_path
+
+
+def _load_cjk_font(size):
+    """Try to load a CJK-capable font, fall back to Pillow default."""
+    from PIL import ImageFont
+    import platform
+
+    candidates = []
+    if platform.system() == "Windows":
+        candidates = ["C:/Windows/Fonts/simhei.ttf", "C:/Windows/Fonts/msyh.ttc"]
+    elif platform.system() == "Darwin":
+        candidates = ["/System/Library/Fonts/PingFang.ttc",
+                      "/System/Library/Fonts/STHeiti Light.ttc"]
+    else:
+        candidates = ["/usr/share/fonts/truetype/droid/DroidSansFallbackFull.ttf"]
+
+    for path in candidates:
+        if os.path.exists(path):
+            return ImageFont.truetype(path, size)
+    return ImageFont.load_default()
+
+
+def _wm_positions(position, w, h, pw, ph):
+    """Compute (left, top) pixel positions for watermark placement."""
+    margin = 20
+    if position == "tile":
+        pts = []
+        y = margin
+        while y < ph:
+            x = margin
+            while x < pw:
+                pts.append((x, y))
+                x += w + 80
+            y += h + 80
+        return pts
+    anchors = {
+        "top-left":      (margin, margin),
+        "top-right":     (pw - w - margin, margin),
+        "center":        ((pw - w) // 2, (ph - h) // 2),
+        "bottom-left":   (margin, ph - h - margin),
+        "bottom-right":  (pw - w - margin, ph - h - margin),
+    }
+    return [anchors.get(position, anchors["center"])]
+
+
+def _draw_rotated_text(draw, text, x, y, tw, th, angle, font, fill):
+    """Draw text centered at (x+tw/2, y+th/2) with rotation."""
+    from PIL import Image
+    pad = 20
+    txt_img = Image.new("RGBA", (tw + pad * 2, th + pad * 2), (255, 255, 255, 0))
+    d = ImageDraw.Draw(txt_img)
+    d.text((pad, pad), text, font=font, fill=fill)
+    if angle != 0:
+        txt_img = txt_img.rotate(angle, expand=True, resample=Image.BICUBIC,
+                                 center=(tw // 2 + pad, th // 2 + pad))
+    cx, cy = x + tw // 2, y + th // 2
+    draw._image.paste(txt_img, (cx - txt_img.width // 2, cy - txt_img.height // 2), txt_img)
+
+
+def _stamp_page(writer, page, stamp_img, w_pt, h_pt):
+    """Overlay a Pillow RGBA image as a stamp onto a pypdf page."""
+    import io
+    # Create a blank PDF page at the correct size, then use pypdf to merge
+    # Save stamp image as PDF bytes (Pillow renders at image pixels / 72 DPI)
+    rgb = stamp_img.convert("RGB")
+    pdf_buf = io.BytesIO()
+    rgb.save(pdf_buf, format="PDF", resolution=72.0)
+    pdf_buf.seek(0)
+
+    stamp_reader = PdfReader(pdf_buf)
+    stamp_page = stamp_reader.pages[0]
+
+    # If stamp page size differs (due to rendering), scale the stamp page
+    # Pillow's PDF output has dimensions matching the image pixel size at 72 DPI
+    # So if stamp_img is (w_pt, h_pt) pixels, the PDF page will be w_pt x h_pt points
+    page.merge_page(stamp_page, over=True)
+    writer.add_page(page)
+
+
+def images_to_pdf(image_paths: list, output_path: str,
+                  page_size: str = "auto") -> str:
+    """Combine images into a single PDF. page_size can be 'auto', 'A4', or 'Letter'."""
+    import io
+    from PIL import Image
+
+    page_sizes = {"A4": (595, 842), "Letter": (612, 792)}
+    merger = PdfWriter()
+
+    for impath in image_paths:
+        im = Image.open(impath).convert("RGB")
+        buf = io.BytesIO()
+        if page_size == "auto":
+            im.save(buf, format="PDF", resolution=72.0)
+        else:
+            w, h = page_sizes.get(page_size, (im.width, im.height))
+            canvas = Image.new("RGB", (w, h), (255, 255, 255))
+            ratio = min(w / im.width, h / im.height)
+            nw, nh = int(im.width * ratio), int(im.height * ratio)
+            im_rs = im.resize((nw, nh), Image.LANCZOS)
+            ox, oy = (w - nw) // 2, (h - nh) // 2
+            canvas.paste(im_rs, (ox, oy))
+            canvas.save(buf, format="PDF", resolution=72.0)
+        buf.seek(0)
+        reader = PdfReader(buf)
+        for pg in reader.pages:
+            merger.add_page(pg)
+
+    with open(output_path, "wb") as f:
+        merger.write(f)
+    return output_path
+
+
+def pdf_to_images(input_path: str, output_dir: str, dpi: int = 200,
+                   fmt: str = "PNG") -> list:
+    """Convert each PDF page to an image using PyMuPDF (fitz)."""
+    import fitz  # PyMuPDF
+
+    doc = fitz.open(input_path)
+    results = []
+    stem = os.path.splitext(os.path.basename(input_path))[0]
+    ext = fmt.lower()
+
+    for i in range(len(doc)):
+        page = doc[i]
+        mat = fitz.Matrix(dpi / 72, dpi / 72)
+        pix = page.get_pixmap(matrix=mat)
+        filename = f"{stem}_page_{i + 1}.{ext}"
+        out_path = _unique_path(output_dir, filename)
+        if ext == "png":
+            pix.save(out_path)
+        else:
+            pix.pil_save(out_path, optimize=True)
+        results.append(out_path)
+
+    doc.close()
+    return results
+
+
+def pdf_to_docx(input_path: str, output_path: str) -> str:
+    """Convert a PDF to a Word (.docx) document. Requires pdf2docx."""
+    try:
+        from pdf2docx import Converter
+    except ImportError:
+        raise ImportError(
+            "此功能需要安装 pdf2docx 库。请运行：pip install pdf2docx"
+        )
+
+    cv = Converter(input_path)
+    cv.convert(output_path)
+    cv.close()
+    return output_path
+
+
 if __name__ == "__main__":
     import tempfile
 
