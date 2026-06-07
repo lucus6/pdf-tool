@@ -1,50 +1,58 @@
-name: Build macOS DMG
+name: Build & Release
 
 on:
   push:
-    branches: [master]
+    tags: ["v*"]
   workflow_dispatch:
 
 jobs:
-  build:
-    runs-on: macos-latest
+  # ── Windows exe ────────────────────────────────────────────────────────
+  build-windows:
+    runs-on: windows-latest
     steps:
       - uses: actions/checkout@v4
 
-      - name: Set up Python
-        uses: actions/setup-python@v5
+      - uses: actions/setup-python@v5
         with:
           python-version: "3.11"
 
       - name: Install dependencies
-        run: pip install PySide6 pypdf pyinstaller
+        run: pip install PySide6 pypdf pyinstaller Pillow PyMuPDF pdf2docx
 
-      - name: Build .app with PyInstaller
+      - name: Build exe
         run: |
-          pyinstaller \
-            --onedir \
-            --windowed \
-            --name "PDF工具箱" \
-            --osx-bundle-identifier "com.pdftoolbox.app" \
-            --add-data "_qt_compat.py:." \
-            --clean \
-            --noconfirm \
-            main.py
+          pyinstaller --onefile --windowed --name "PDF工具箱" --add-data "_qt_compat.py;." --clean --noconfirm main.py
+
+      - name: Upload exe to release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: dist/PDF工具箱.exe
+
+  # ── macOS DMG ──────────────────────────────────────────────────────────
+  build-macos:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install dependencies
+        run: pip install PySide6 pypdf pyinstaller Pillow PyMuPDF pdf2docx
+
+      - name: Build .app
+        run: |
+          pyinstaller --onedir --windowed --name "PDF工具箱" --osx-bundle-identifier "com.pdftoolbox.app" --add-data "_qt_compat.py:." --clean --noconfirm main.py
 
       - name: Create DMG
         run: |
           mkdir dmg_root
           cp -R dist/PDF工具箱.app dmg_root/
           ln -s /Applications dmg_root/Applications
-          hdiutil create \
-            -volname "PDF工具箱" \
-            -srcfolder dmg_root \
-            -ov \
-            -format UDZO \
-            PDF工具箱.dmg
+          hdiutil create -volname "PDF工具箱" -srcfolder dmg_root -ov -format UDZO PDF工具箱.dmg
 
-      - name: Upload DMG artifact
-        uses: actions/upload-artifact@v4
+      - name: Upload DMG to release
+        uses: softprops/action-gh-release@v2
         with:
-          name: PDF工具箱-macOS
-          path: PDF工具箱.dmg
+          files: PDF工具箱.dmg
