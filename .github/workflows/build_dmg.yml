@@ -48,9 +48,3 @@ jobs:
         with:
           name: PDF工具箱-macOS
           path: PDF工具箱.dmg
-
-      - name: Upload .app artifact (for download & unzip)
-        uses: actions/upload-artifact@v4
-        with:
-          name: PDF工具箱-macOS-app
-          path: dist/PDF工具箱.app
