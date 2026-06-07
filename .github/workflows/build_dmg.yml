@@ -10,6 +10,9 @@ on:
         required: true
         default: "master"
 
+permissions:
+  contents: write
+
 jobs:
   # ── Windows exe ────────────────────────────────────────────────────────
   build-windows:
